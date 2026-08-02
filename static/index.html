@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Election PDF → Excel</title>
+  <style>
+    :root{font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#17233d;background:#edf4fc}
+    *{box-sizing:border-box}.wrap{max-width:820px;margin:40px auto;padding:20px}.card{background:#fff;border-radius:24px;padding:34px;box-shadow:0 18px 60px rgba(31,65,114,.12)}
+    h1{font-size:40px;margin:0 0 8px}p{color:#5b6b86;line-height:1.55}.drop{border:2px dashed #5b9ee3;border-radius:18px;padding:28px;margin:25px 0;background:#f7fbff}
+    label{font-weight:700;display:block;margin:14px 0 7px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}select,input[type=text],input[type=file]{width:100%;padding:13px;border:1px solid #cbd8e8;border-radius:11px;background:#fff}
+    button,.download{display:block;width:100%;padding:15px;border:0;border-radius:12px;background:#347fbd;color:#fff;font-size:17px;font-weight:800;text-align:center;text-decoration:none;cursor:pointer;margin-top:20px}
+    button:disabled{opacity:.65;cursor:not-allowed}.download{background:#16834f}.progress{height:12px;background:#dce8f5;border-radius:99px;overflow:hidden;margin-top:20px}.bar{height:100%;width:0;background:#347fbd;transition:width .3s}
+    .status{display:flex;justify-content:space-between;margin-top:8px}.error{color:#b42318;font-weight:700;white-space:pre-wrap}.note{font-size:13px}.manual{margin-top:14px;padding:14px;border-radius:12px;background:#f8fafc}.hidden{display:none}.selected{font-weight:700;margin:10px 0 0;color:#233b5e;word-break:break-all}
+    @media(max-width:680px){.grid{grid-template-columns:1fr}h1{font-size:31px}.card{padding:23px}.wrap{margin:10px auto}}
+  </style>
+</head>
+<body>
+  <main class="wrap"><section class="card">
+    <h1>Election PDF → Excel</h1>
+    <p>Hindi/English electoral-roll PDF को साफ और formatted Excel में बदलें। PDF चुनें, processing mode चुनें और Convert PDF दबाएँ।</p>
+
+    <!-- onsubmit=false is a safety net: this page must never reload on Convert. -->
+    <form id="form" onsubmit="return false;" novalidate>
+      <div class="drop">
+        <input id="pdf" name="pdf" type="file" accept="application/pdf,.pdf" />
+        <div id="selectedName" class="selected">No PDF selected</div>
+      </div>
+
+      <label for="mode">Processing mode</label>
+      <select id="mode" name="mode">
+        <option value="accurate" selected>Accurate — recommended</option>
+        <option value="balanced">Balanced</option>
+        <option value="fast">Fast</option>
+      </select>
+
+      <div class="manual">
+        <label style="margin:0"><input id="manualCheck" type="checkbox" /> PDF header unreadable है — manual metadata use करें</label>
+        <div id="manualFields" class="grid hidden">
+          <div><label for="constituency">विधानसभा क्षेत्र</label><input id="constituency" type="text" placeholder="e.g. 86-एत्मादपुर" /></div>
+          <div><label for="section">अनुभाग</label><input id="section" type="text" placeholder="e.g. 1-गिजौली" /></div>
+          <div><label for="part_number">भाग संख्या</label><input id="part_number" type="text" placeholder="e.g. 1" /></div>
+        </div>
+      </div>
+
+      <!-- type=button prevents a native browser form submission/reload. -->
+      <button id="convertBtn" type="button">Convert PDF</button>
+    </form>
+
+    <div id="progressWrap" class="hidden">
+      <div class="progress"><div id="bar" class="bar"></div></div>
+      <div class="status"><span id="message">Starting…</span><strong id="percent">0%</strong></div>
+    </div>
+    <p id="details" class="note"></p>
+    <p id="error" class="error"></p>
+    <a id="download" class="download hidden">Download Excel</a>
+    <p class="note">Orange rows में वे रिकॉर्ड होते हैं जिन्हें एक बार जाँचने की जरूरत है। अधूरा रिकॉर्ड बिना बताए हटाया नहीं जाता।</p>
+  </section></main>
+
+<script>
+(() => {
+  'use strict';
+
+  const pdfInput = document.getElementById('pdf');
+  const selectedName = document.getElementById('selectedName');
+  const convertBtn = document.getElementById('convertBtn');
+  const mode = document.getElementById('mode');
+  const manualCheck = document.getElementById('manualCheck');
+  const manualFields = document.getElementById('manualFields');
+  const constituency = document.getElementById('constituency');
+  const section = document.getElementById('section');
+  const partNumber = document.getElementById('part_number');
+  const progressWrap = document.getElementById('progressWrap');
+  const bar = document.getElementById('bar');
+  const message = document.getElementById('message');
+  const percent = document.getElementById('percent');
+  const error = document.getElementById('error');
+  const details = document.getElementById('details');
+  const download = document.getElementById('download');
+
+  // Keep the File object in memory. Even if the browser redraws the input,
+  // clicking Convert still uses the exact selected PDF.
+  let selectedFile = null;
+  let pollingTimer = null;
+
+  manualCheck.addEventListener('change', () => {
+    manualFields.classList.toggle('hidden', !manualCheck.checked);
+  });
+
+  pdfInput.addEventListener('change', () => {
+    selectedFile = pdfInput.files && pdfInput.files.length ? pdfInput.files[0] : null;
+    selectedName.textContent = selectedFile
+      ? `${selectedFile.name} (${(selectedFile.size / 1024 / 1024).toFixed(2)} MB)`
+      : 'No PDF selected';
+    error.textContent = '';
+  });
+
+  // Extra protection against any native form submission.
+  document.getElementById('form').addEventListener('submit', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    return false;
+  });
+
+  function setBusy(busy) {
+    convertBtn.disabled = busy;
+    convertBtn.textContent = busy ? 'Converting… please wait' : 'Convert PDF';
+  }
+
+  function showError(value) {
+    setBusy(false);
+    error.textContent = value || 'Conversion failed.';
+    message.textContent = 'Stopped';
+  }
+
+  async function readJson(response) {
+    const text = await response.text();
+    try {
+      return text ? JSON.parse(text) : {};
+    } catch (_) {
+      throw new Error(`Server returned an invalid response (${response.status}). Check the Terminal for the actual error.`);
+    }
+  }
+
+  async function startConversion() {
+    error.textContent = '';
+    details.textContent = '';
+    download.classList.add('hidden');
+
+    if (!selectedFile) {
+      showError('Choose a PDF first.');
+      return;
+    }
+    if (!selectedFile.name.toLowerCase().endsWith('.pdf')) {
+      showError('Only PDF files are accepted.');
+      return;
+    }
+
+    setBusy(true);
+    progressWrap.classList.remove('hidden');
+    bar.style.width = '2%';
+    percent.textContent = '2%';
+    message.textContent = 'Uploading PDF…';
+
+    const data = new FormData();
+    data.append('pdf', selectedFile, selectedFile.name);
+    data.append('mode', mode.value);
+    data.append('use_manual_metadata', manualCheck.checked ? 'true' : 'false');
+    data.append('constituency', manualCheck.checked ? constituency.value.trim() : '');
+    data.append('section', manualCheck.checked ? section.value.trim() : '');
+    data.append('part_number', manualCheck.checked ? partNumber.value.trim() : '');
+
+    try {
+      const response = await fetch('/api/jobs', {
+        method: 'POST',
+        body: data,
+        cache: 'no-store'
+      });
+      const body = await readJson(response);
+      if (!response.ok) {
+        throw new Error(body.detail || `Upload failed (${response.status}).`);
+      }
+      if (!body.id) {
+        throw new Error('The server did not return a job ID.');
+      }
+      poll(body.id);
+    } catch (err) {
+      showError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function poll(id) {
+    try {
+      const response = await fetch(`/api/jobs/${encodeURIComponent(id)}`, {cache: 'no-store'});
+      const job = await readJson(response);
+      if (!response.ok) {
+        throw new Error(job.detail || `Job check failed (${response.status}).`);
+      }
+
+      const progress = Number.isFinite(Number(job.progress)) ? Number(job.progress) : 0;
+      bar.style.width = `${progress}%`;
+      percent.textContent = `${progress}%`;
+      message.textContent = job.message || 'Processing…';
+
+      if (job.status === 'completed') {
+        setBusy(false);
+        details.textContent = `${job.records} records exported • ${job.review_records} need review • ${job.warnings} process notes`;
+        download.href = job.download_url;
+        download.classList.remove('hidden');
+        return;
+      }
+      if (job.status === 'failed') {
+        throw new Error(job.error || 'Conversion failed. Check the Terminal for details.');
+      }
+
+      pollingTimer = window.setTimeout(() => poll(id), 900);
+    } catch (err) {
+      if (pollingTimer) window.clearTimeout(pollingTimer);
+      showError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  convertBtn.addEventListener('click', startConversion);
+})();
+</script>
+</body>
+</html>

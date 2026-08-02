@@ -1,0 +1,12 @@
+BUILD THE WINDOWS EXE FROM YOUR MAC USING GITHUB
+=================================================
+
+1. Create a private GitHub repository.
+2. Upload every file and folder from this builder package, including .github.
+3. Open the repository’s Actions tab.
+4. Select “Build Windows EXE”.
+5. Click “Run workflow”.
+6. After it finishes, download the ElectionPDFConverter-Windows artifact.
+7. Inside it, give ElectionPDFConverter_Setup.exe to the client.
+
+The workflow uses a Windows runner, so the produced file is a genuine Windows EXE.

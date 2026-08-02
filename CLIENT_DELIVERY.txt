@@ -1,0 +1,13 @@
+Give the client only:
+
+ElectionPDFConverter_Setup.exe
+
+Do not give the builder ZIP, source folder, .venv, build, dist, or spec files.
+
+Before delivery, install the Setup.exe on a clean Windows computer and test:
+- Application opens from desktop shortcut
+- Client PDF uploads
+- Record count is correct
+- EPIC, name, relation, house number, age and gender are checked
+- Excel opens without a repair warning
+- Hindi text displays correctly
