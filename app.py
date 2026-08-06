@@ -13,9 +13,6 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
-# Activate the production OCR accuracy layer before importing the converter.
-# It adds tolerant EPIC/serial parsing, Hindi digit support, field-by-field
-# merging, and safe sequence recovery without changing the one-click workflow.
 from backend.accuracy_patch import apply as apply_accuracy_patch
 
 apply_accuracy_patch()
@@ -32,7 +29,7 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 app = FastAPI(
     title="Election PDF to Excel Backend",
     description="Hindi/English electoral-roll PDF to formatted Excel converter",
-    version="3.2.0",
+    version="3.3.0",
 )
 
 origins = [value.strip() for value in os.getenv("CORS_ORIGINS", "*").split(",") if value.strip()]
@@ -129,13 +126,13 @@ def home() -> HTMLResponse:
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "service": "election-pdf-to-excel", "version": "3.2.0"}
+    return {"status": "ok", "service": "election-pdf-to-excel", "version": "3.3.0"}
 
 
 @app.post("/api/jobs")
 def create_job(
     pdf: UploadFile = File(...),
-    mode: str = Form("hybrid"),
+    mode: str = Form("turbo"),
     use_manual_metadata: bool = Form(False),
     constituency: str = Form(""),
     section: str = Form(""),
@@ -143,7 +140,7 @@ def create_job(
 ) -> JSONResponse:
     if not (pdf.filename or "").lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
-    if mode not in ("fast", "hybrid", "balanced", "accurate"):
+    if mode not in ("turbo", "fast", "hybrid", "balanced", "accurate"):
         raise HTTPException(status_code=400, detail="Invalid processing mode.")
     job_id = uuid.uuid4().hex
     safe_name = safe_filename(pdf.filename or "election_roll.pdf")
@@ -199,7 +196,7 @@ def download_job(job_id: str) -> FileResponse:
 @app.post("/api/convert")
 def direct_convert(
     pdf: UploadFile = File(...),
-    mode: str = Form("hybrid"),
+    mode: str = Form("turbo"),
     use_manual_metadata: bool = Form(False),
     constituency: str = Form(""),
     section: str = Form(""),
