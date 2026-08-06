@@ -48,25 +48,27 @@ jobs:
 
       - name: Validate optimized source
         run: |
-          python -m compileall -q app.py backend
-          python -c "from backend.config import ConversionConfig; assert ConversionConfig().mode == 'hybrid'; print('Hybrid mode ready')"
+          python -m compileall -q app.py backend launcher_windows.py
+          python -c "import app; from backend.config import ConversionConfig; from backend import parser; assert ConversionConfig().mode == 'hybrid'; assert parser._extract_epic('123 ABC O1234567') == 'ABC01234567'; assert parser._extract_serial(['७६७ ABC01234567']) == '767'; print('Hybrid accuracy path ready')"
 
       - name: Build one standalone EXE
         run: |
           python -m PyInstaller --noconfirm --clean ElectionPDFConverter.spec
 
-      - name: Verify EXE
+      - name: Verify EXE and bundled OCR
         shell: powershell
         run: |
           $exe = "dist\VoterListConverter.exe"
           if (!(Test-Path $exe)) { throw "Standalone EXE was not created." }
           $size = (Get-Item $exe).Length
           if ($size -lt 50000000) { throw "EXE is unexpectedly small and may not contain OCR dependencies." }
+          & $exe --self-test
+          if ($LASTEXITCODE -ne 0) { throw "Packaged EXE OCR/parser self-test failed." }
           Get-FileHash $exe -Algorithm SHA256 | Format-List
 
       - name: Upload standalone EXE
         uses: actions/upload-artifact@v4
         with:
-          name: VoterListConverter-Standalone-Windows-x64
+          name: VoterListConverter-Fast-Accurate-Windows-x64
           path: dist/VoterListConverter.exe
           if-no-files-found: error
