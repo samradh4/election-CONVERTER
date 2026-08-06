@@ -52,10 +52,11 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements-build.txt
 
-      - name: Validate Turbo AI Reader source
+      - name: Validate strict quality reader
         run: |
-          python -m compileall -q app.py backend launcher_windows.py
-          python -c "import app; from backend.config import ConversionConfig; from backend import parser; from backend.turbo_reader import read_page_columns, read_card_top_lines; assert ConversionConfig().mode == 'turbo'; assert parser._extract_epic('123 ABC O1234567') == 'ABC01234567'; assert parser._extract_serial(['७६७ ABC01234567']) == '767'; print('Turbo AI Reader path ready')"
+          python -m compileall -q app.py backend launcher_windows.py quality_selftest.py
+          python quality_selftest.py
+          python -c "import app; from backend.config import ConversionConfig; assert ConversionConfig().mode == 'turbo'; assert ConversionConfig().settings.dpi == 250; print('Strict reader source ready')"
 
       - name: Build one standalone EXE
         run: |
@@ -71,7 +72,7 @@ jobs:
 
           $process = Start-Process -FilePath $exe -ArgumentList "--self-test" -Wait -PassThru
           if ($process.ExitCode -ne 0) {
-            throw "Packaged EXE OCR/parser self-test failed with exit code $($process.ExitCode)."
+            throw "Packaged EXE strict reader self-test failed with exit code $($process.ExitCode)."
           }
 
           Get-FileHash $exe -Algorithm SHA256 | Format-List
@@ -79,6 +80,6 @@ jobs:
       - name: Upload standalone EXE
         uses: actions/upload-artifact@v4
         with:
-          name: VoterListConverter-Turbo-AI-Windows-x64
+          name: VoterListConverter-Strict-Clean-Windows-x64
           path: dist/VoterListConverter.exe
           if-no-files-found: error
