@@ -48,17 +48,18 @@ def _workers(limit: int) -> int:
 
 
 MODES = {
-    # Fastest option for clean scans. One OCR pass per page and no card-level retry.
+    # Fast still protects client-required fields. It uses a lighter page pass,
+    # then re-reads only cards that are incomplete.
     "fast": ModeSettings(
-        dpi=180,
+        dpi=200,
         workers=_workers(6),
-        card_ocr_policy="never",
-        min_record_confidence=0.58,
+        card_ocr_policy="missing-fields",
+        min_record_confidence=0.60,
         page_psm=11,
         card_psm=6,
     ),
-    # Default one-click mode: use embedded PDF text instantly when present,
-    # otherwise OCR each scanned page once and retry only cards missing key fields.
+    # Best default: embedded text is used instantly; scans get one page pass and
+    # selective card/top-line retries for missing serial, EPIC, age, or gender.
     "hybrid": ModeSettings(
         dpi=220,
         workers=_workers(6),
