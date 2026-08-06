@@ -43,9 +43,18 @@ def self_test() -> None:
 
     epic = parser._extract_epic("क्रम 123 UCC0700005")
     if epic != "UCC0700005" or not valid_epic(epic):
-        raise RuntimeError("EPIC parser self-test failed: {}".format(epic))
+        raise RuntimeError("Modern EPIC parser self-test failed: {}".format(epic))
+
+    legacy = parser._extract_epic("UP/57/277/0036003")
+    if legacy != "UP/57/277/0036003" or not valid_epic(legacy):
+        raise RuntimeError("Legacy EPIC parser self-test failed: {}".format(legacy))
+
+    noisy = parser._extract_epic("UCC3594744 7")
+    if noisy != "UCC3594744":
+        raise RuntimeError("EPIC boundary repair self-test failed: {}".format(noisy))
+
     if parser._extract_epic("ABC01234567"):
-        raise RuntimeError("Invalid EPIC length was incorrectly accepted.")
+        raise RuntimeError("Ambiguous extra EPIC digit was incorrectly truncated.")
 
     serial = parser._extract_serial(["७६७ UCC0700005"])
     if serial != "767":
