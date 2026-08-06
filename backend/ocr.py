@@ -35,17 +35,11 @@ def _configure_tesseract() -> None:
                 pytesseract.pytesseract.tesseract_cmd = str(candidate)
                 break
 
-    # On Windows, passing a quoted --tessdata-dir string through pytesseract can
-    # leave the closing quote inside the path. Tesseract then looks for files
-    # such as tessdata"/hin.traineddata and fails. Point Tesseract directly at
-    # the bundled language directory through the environment instead.
     if TESSDATA_DIR.is_dir():
         os.environ["TESSDATA_PREFIX"] = str(TESSDATA_DIR)
 
 
 def _tessdata_config() -> str:
-    # TESSDATA_PREFIX is configured in _configure_tesseract(). Avoid adding a
-    # quoted --tessdata-dir argument, which is unreliable in frozen Windows EXEs.
     return ""
 
 
@@ -81,9 +75,14 @@ def _prepare_image(image: np.ndarray, strong: bool = False) -> np.ndarray:
     return gray
 
 
-def image_to_words(image: np.ndarray, languages: str, psm: int = 11) -> List[OCRWord]:
+def image_to_words(
+    image: np.ndarray,
+    languages: str,
+    psm: int = 11,
+    strong: bool = False,
+) -> List[OCRWord]:
     _configure_tesseract()
-    prepared = _prepare_image(image, strong=False)
+    prepared = _prepare_image(image, strong=strong)
     config = "--oem 1 --psm {}".format(int(psm))
     data = pytesseract.image_to_data(
         prepared, lang=languages, config=config, output_type=Output.DICT
