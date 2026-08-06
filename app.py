@@ -13,6 +13,13 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
+# Activate the production OCR accuracy layer before importing the converter.
+# It adds tolerant EPIC/serial parsing, Hindi digit support, field-by-field
+# merging, and safe sequence recovery without changing the one-click workflow.
+from backend.accuracy_patch import apply as apply_accuracy_patch
+
+apply_accuracy_patch()
+
 from backend.config import OUTPUT_DIR, RESOURCE_ROOT, UPLOAD_DIR, ConversionConfig
 from backend.converter import convert_pdf
 from backend.excel_writer import write_excel
@@ -25,7 +32,7 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 app = FastAPI(
     title="Election PDF to Excel Backend",
     description="Hindi/English electoral-roll PDF to formatted Excel converter",
-    version="3.1.0",
+    version="3.2.0",
 )
 
 origins = [value.strip() for value in os.getenv("CORS_ORIGINS", "*").split(",") if value.strip()]
@@ -122,7 +129,7 @@ def home() -> HTMLResponse:
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "service": "election-pdf-to-excel", "version": "3.1.0"}
+    return {"status": "ok", "service": "election-pdf-to-excel", "version": "3.2.0"}
 
 
 @app.post("/api/jobs")
