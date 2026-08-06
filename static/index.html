@@ -18,7 +18,7 @@
 <body>
   <main class="wrap"><section class="card">
     <h1>Election PDF → Excel</h1>
-    <p>PDF चुनें और एक क्लिक में formatted Excel बनाएं। Searchable PDF का text सीधे पढ़ा जाएगा; scanned voter list पर automatic OCR चलेगा।</p>
+    <p>PDF चुनें और एक क्लिक में formatted Excel बनाएं। Turbo AI Reader scanned voter pages को card-by-card पढ़ने की जगह बड़े batches में पढ़ता है।</p>
 
     <form id="form" onsubmit="return false;" novalidate>
       <div class="drop">
@@ -28,7 +28,8 @@
 
       <label for="mode">Processing mode</label>
       <select id="mode" name="mode">
-        <option value="hybrid" selected>Automatic Hybrid — recommended</option>
+        <option value="turbo" selected>Turbo AI Reader — fastest offline</option>
+        <option value="hybrid">Automatic Hybrid — more card retries</option>
         <option value="fast">Fast — clean scans</option>
         <option value="balanced">Balanced — extra checking</option>
         <option value="accurate">Accurate — slowest</option>
