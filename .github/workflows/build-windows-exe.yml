@@ -15,6 +15,9 @@ on:
       - reopened
       - ready_for_review
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
@@ -22,6 +25,23 @@ jobs:
     steps:
       - name: Download project
         uses: actions/checkout@v4
+
+      - name: Publish workflow run ID
+        shell: powershell
+        run: |
+          $state = Join-Path $env:RUNNER_TEMP "strict-run-state"
+          git fetch origin build-run-state
+          git worktree add $state origin/build-run-state
+          Push-Location $state
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          "${{ github.run_id }}" | Set-Content -Encoding ascii latest_strict_run.txt
+          "${{ github.sha }}" | Set-Content -Encoding ascii latest_strict_sha.txt
+          "${{ github.event_name }}" | Set-Content -Encoding ascii latest_strict_event.txt
+          git add latest_strict_run.txt latest_strict_sha.txt latest_strict_event.txt
+          git commit -m "Record strict build run ${{ github.run_id }}"
+          git push origin HEAD:build-run-state
+          Pop-Location
 
       - name: Install Python 3.11
         uses: actions/setup-python@v5
