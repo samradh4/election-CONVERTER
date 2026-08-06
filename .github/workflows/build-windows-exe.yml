@@ -64,12 +64,19 @@ jobs:
       - name: Verify EXE and bundled OCR
         shell: powershell
         run: |
-          $exe = "dist\VoterListConverter.exe"
+          $exe = Resolve-Path "dist\VoterListConverter.exe"
           if (!(Test-Path $exe)) { throw "Standalone EXE was not created." }
           $size = (Get-Item $exe).Length
           if ($size -lt 50000000) { throw "EXE is unexpectedly small and may not contain OCR dependencies." }
-          & $exe --self-test
-          if ($LASTEXITCODE -ne 0) { throw "Packaged EXE OCR/parser self-test failed." }
+
+          # VoterListConverter is a Windows GUI executable. Calling it with '&'
+          # returns before completion and leaves $LASTEXITCODE unset. Wait for the
+          # packaged self-test process and read its real exit code instead.
+          $process = Start-Process -FilePath $exe -ArgumentList "--self-test" -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            throw "Packaged EXE OCR/parser self-test failed with exit code $($process.ExitCode)."
+          }
+
           Get-FileHash $exe -Algorithm SHA256 | Format-List
 
       - name: Upload standalone EXE
