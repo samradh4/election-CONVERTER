@@ -45,11 +45,12 @@ def self_test() -> None:
 
 
 def main() -> None:
-    try:
-        if "--self-test" in sys.argv:
-            self_test()
-            return
+    # No message box in CI self-test mode; a failure must return a non-zero code.
+    if "--self-test" in sys.argv:
+        self_test()
+        return
 
+    try:
         port = free_port()
         url = "http://127.0.0.1:{}".format(port)
 
