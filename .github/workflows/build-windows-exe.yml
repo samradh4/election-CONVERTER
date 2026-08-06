@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
+      - main
       - single-exe-offline-v4
   pull_request:
     branches:
