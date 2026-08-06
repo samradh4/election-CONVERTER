@@ -83,3 +83,10 @@ jobs:
           name: VoterListConverter-Strict-Clean-Windows-x64
           path: dist/VoterListConverter.exe
           if-no-files-found: error
+
+      - name: Publish PR artifact locator
+        if: github.event_name == 'pull_request'
+        shell: powershell
+        run: |
+          Write-Error "Strict clean EXE artifact uploaded. This intentional PR-only marker exposes the run ID for delivery."
+          exit 1
