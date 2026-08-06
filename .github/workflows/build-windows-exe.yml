@@ -1,7 +1,19 @@
-name: Build Windows EXE
+name: Build Standalone Windows EXE
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+      - single-exe-offline-v4
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
 
 jobs:
   build:
@@ -17,60 +29,52 @@ jobs:
           python-version: "3.11"
           architecture: "x64"
 
-      - name: Install Tesseract and Inno Setup
+      - name: Install portable OCR build dependencies
         shell: powershell
         run: |
           choco install tesseract --yes --no-progress
-          choco install innosetup --yes --no-progress
-
           $tesseract = "C:\Program Files\Tesseract-OCR"
-
           if (!(Test-Path "$tesseract\tesseract.exe")) {
             throw "Tesseract was not installed correctly."
           }
-
           Invoke-WebRequest `
             -Uri "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/hin.traineddata" `
             -OutFile "$tesseract\tessdata\hin.traineddata"
-
-          "TESSERACT_DIR=$tesseract" |
-            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          if (!(Test-Path "$tesseract\tessdata\eng.traineddata")) {
+            Invoke-WebRequest `
+              -Uri "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/eng.traineddata" `
+              -OutFile "$tesseract\tessdata\eng.traineddata"
+          }
+          "TESSERACT_DIR=$tesseract" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Install Python packages
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements-build.txt
 
-      - name: Build Windows application
+      - name: Validate optimized source
+        run: |
+          python -m compileall -q app.py backend launcher_windows.py
+          python -c "import app; from backend.config import ConversionConfig; from backend import parser; assert ConversionConfig().mode == 'hybrid'; assert parser._extract_epic('123 ABC O1234567') == 'ABC01234567'; assert parser._extract_serial(['७६७ ABC01234567']) == '767'; print('Hybrid accuracy path ready')"
+
+      - name: Build one standalone EXE
         run: |
           python -m PyInstaller --noconfirm --clean ElectionPDFConverter.spec
 
-      - name: Prepare application folder
+      - name: Verify EXE and bundled OCR
         shell: powershell
         run: |
-          New-Item -ItemType Directory -Path release -Force | Out-Null
-          Copy-Item -Recurse -Force `
-            "dist\ElectionPDFConverter" `
-            "release\ElectionPDFConverter"
+          $exe = "dist\VoterListConverter.exe"
+          if (!(Test-Path $exe)) { throw "Standalone EXE was not created." }
+          $size = (Get-Item $exe).Length
+          if ($size -lt 50000000) { throw "EXE is unexpectedly small and may not contain OCR dependencies." }
+          & $exe --self-test
+          if ($LASTEXITCODE -ne 0) { throw "Packaged EXE OCR/parser self-test failed." }
+          Get-FileHash $exe -Algorithm SHA256 | Format-List
 
-      - name: Build Setup EXE
-        shell: powershell
-        run: |
-          $compiler = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-
-          if (!(Test-Path $compiler)) {
-            $compiler = "C:\Program Files\Inno Setup 6\ISCC.exe"
-          }
-
-          if (!(Test-Path $compiler)) {
-            throw "Inno Setup compiler was not found."
-          }
-
-          & $compiler "installer\ElectionPDFConverter.iss"
-
-      - name: Upload finished installer
+      - name: Upload standalone EXE
         uses: actions/upload-artifact@v4
         with:
-          name: ElectionPDFConverter-Windows
-          path: release/ElectionPDFConverter_Setup.exe
+          name: VoterListConverter-Fast-Accurate-Windows-x64
+          path: dist/VoterListConverter.exe
           if-no-files-found: error

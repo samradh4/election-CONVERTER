@@ -17,8 +17,6 @@ from .utils import normalize_text
 
 
 def _configure_tesseract() -> None:
-    if shutil.which("tesseract"):
-        return
     candidates = [
         RESOURCE_ROOT / "tesseract" / "tesseract.exe",
         Path(sys.executable).resolve().parent / "tesseract" / "tesseract.exe",
@@ -27,15 +25,27 @@ def _configure_tesseract() -> None:
         Path("/opt/homebrew/bin/tesseract"),
         Path("/usr/local/bin/tesseract"),
     ]
-    for candidate in candidates:
-        if candidate.is_file():
-            pytesseract.pytesseract.tesseract_cmd = str(candidate)
-            return
+
+    bundled = RESOURCE_ROOT / "tesseract" / "tesseract.exe"
+    if bundled.is_file():
+        pytesseract.pytesseract.tesseract_cmd = str(bundled)
+    elif not shutil.which("tesseract"):
+        for candidate in candidates[1:]:
+            if candidate.is_file():
+                pytesseract.pytesseract.tesseract_cmd = str(candidate)
+                break
+
+    # On Windows, passing a quoted --tessdata-dir string through pytesseract can
+    # leave the closing quote inside the path. Tesseract then looks for files
+    # such as tessdata"/hin.traineddata and fails. Point Tesseract directly at
+    # the bundled language directory through the environment instead.
+    if TESSDATA_DIR.is_dir():
+        os.environ["TESSDATA_PREFIX"] = str(TESSDATA_DIR)
 
 
 def _tessdata_config() -> str:
-    if (TESSDATA_DIR / "hin.traineddata").is_file() and (TESSDATA_DIR / "eng.traineddata").is_file():
-        return '--tessdata-dir "{}"'.format(str(TESSDATA_DIR))
+    # TESSDATA_PREFIX is configured in _configure_tesseract(). Avoid adding a
+    # quoted --tessdata-dir argument, which is unreliable in frozen Windows EXEs.
     return ""
 
 
@@ -45,12 +55,12 @@ def validate_ocr_languages(languages: str) -> None:
         available = set(pytesseract.get_languages(config=_tessdata_config()))
     except Exception as exc:
         raise RuntimeError(
-            "Tesseract OCR is missing from this installation. Reinstall Election PDF Converter."
+            "Bundled Tesseract OCR could not start. Re-download the latest Voter List Converter."
         ) from exc
     missing = [lang for lang in languages.split("+") if lang and lang not in available]
     if missing:
         raise RuntimeError(
-            "Missing Tesseract language data: {}. Reinstall Election PDF Converter.".format(
+            "Bundled OCR language data is missing: {}. Re-download the latest Voter List Converter.".format(
                 ", ".join(missing)
             )
         )
@@ -74,7 +84,7 @@ def _prepare_image(image: np.ndarray, strong: bool = False) -> np.ndarray:
 def image_to_words(image: np.ndarray, languages: str, psm: int = 11) -> List[OCRWord]:
     _configure_tesseract()
     prepared = _prepare_image(image, strong=False)
-    config = "{} --oem 1 --psm {}".format(_tessdata_config(), int(psm)).strip()
+    config = "--oem 1 --psm {}".format(int(psm))
     data = pytesseract.image_to_data(
         prepared, lang=languages, config=config, output_type=Output.DICT
     )
@@ -119,9 +129,7 @@ def crop_to_text(
 ) -> Tuple[str, float]:
     _configure_tesseract()
     prepared = _prepare_image(image, strong=strong)
-    config = "{} --oem 1 --psm {} -c preserve_interword_spaces=1".format(
-        _tessdata_config(), int(psm)
-    ).strip()
+    config = "--oem 1 --psm {} -c preserve_interword_spaces=1".format(int(psm))
     data = pytesseract.image_to_data(
         prepared, lang=languages, config=config, output_type=Output.DICT
     )

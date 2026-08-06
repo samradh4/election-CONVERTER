@@ -36,7 +36,7 @@ TESSDATA_DIR = _BUNDLED_TESSDATA if _BUNDLED_TESSDATA.is_dir() else _PROJECT_TES
 class ModeSettings:
     dpi: int
     workers: int
-    card_ocr_policy: str  # never, fallback, always
+    card_ocr_policy: str  # never, missing-fields, fallback, always
     min_record_confidence: float
     page_psm: int
     card_psm: int
@@ -48,19 +48,31 @@ def _workers(limit: int) -> int:
 
 
 MODES = {
+    # Fast still protects client-required fields. It uses a lighter page pass,
+    # then re-reads only cards that are incomplete.
     "fast": ModeSettings(
+        dpi=200,
+        workers=_workers(6),
+        card_ocr_policy="missing-fields",
+        min_record_confidence=0.60,
+        page_psm=11,
+        card_psm=6,
+    ),
+    # Best default: embedded text is used instantly; scans get one page pass and
+    # selective card/top-line retries for missing serial, EPIC, age, or gender.
+    "hybrid": ModeSettings(
         dpi=220,
-        workers=_workers(5),
-        card_ocr_policy="fallback",
-        min_record_confidence=0.62,
+        workers=_workers(6),
+        card_ocr_policy="missing-fields",
+        min_record_confidence=0.64,
         page_psm=11,
         card_psm=6,
     ),
     "balanced": ModeSettings(
-        dpi=280,
-        workers=_workers(4),
+        dpi=250,
+        workers=_workers(5),
         card_ocr_policy="fallback",
-        min_record_confidence=0.72,
+        min_record_confidence=0.70,
         page_psm=11,
         card_psm=6,
     ),
@@ -77,7 +89,7 @@ MODES = {
 
 @dataclass
 class ConversionConfig:
-    mode: str = "accurate"
+    mode: str = "hybrid"
     languages: str = "hin+eng"
     constituency_override: str = ""
     section_override: str = ""
@@ -87,4 +99,4 @@ class ConversionConfig:
 
     @property
     def settings(self) -> ModeSettings:
-        return MODES.get(self.mode, MODES["accurate"])
+        return MODES.get(self.mode, MODES["hybrid"])

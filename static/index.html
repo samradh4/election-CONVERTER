@@ -18,9 +18,8 @@
 <body>
   <main class="wrap"><section class="card">
     <h1>Election PDF → Excel</h1>
-    <p>Hindi/English electoral-roll PDF को साफ और formatted Excel में बदलें। PDF चुनें, processing mode चुनें और Convert PDF दबाएँ।</p>
+    <p>PDF चुनें और एक क्लिक में formatted Excel बनाएं। Searchable PDF का text सीधे पढ़ा जाएगा; scanned voter list पर automatic OCR चलेगा।</p>
 
-    <!-- onsubmit=false is a safety net: this page must never reload on Convert. -->
     <form id="form" onsubmit="return false;" novalidate>
       <div class="drop">
         <input id="pdf" name="pdf" type="file" accept="application/pdf,.pdf" />
@@ -29,9 +28,10 @@
 
       <label for="mode">Processing mode</label>
       <select id="mode" name="mode">
-        <option value="accurate" selected>Accurate — recommended</option>
-        <option value="balanced">Balanced</option>
-        <option value="fast">Fast</option>
+        <option value="hybrid" selected>Automatic Hybrid — recommended</option>
+        <option value="fast">Fast — clean scans</option>
+        <option value="balanced">Balanced — extra checking</option>
+        <option value="accurate">Accurate — slowest</option>
       </select>
 
       <div class="manual">
@@ -43,8 +43,7 @@
         </div>
       </div>
 
-      <!-- type=button prevents a native browser form submission/reload. -->
-      <button id="convertBtn" type="button">Convert PDF</button>
+      <button id="convertBtn" type="button">Convert PDF to Excel</button>
     </form>
 
     <div id="progressWrap" class="hidden">
@@ -78,8 +77,6 @@
   const details = document.getElementById('details');
   const download = document.getElementById('download');
 
-  // Keep the File object in memory. Even if the browser redraws the input,
-  // clicking Convert still uses the exact selected PDF.
   let selectedFile = null;
   let pollingTimer = null;
 
@@ -95,7 +92,6 @@
     error.textContent = '';
   });
 
-  // Extra protection against any native form submission.
   document.getElementById('form').addEventListener('submit', (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -104,7 +100,7 @@
 
   function setBusy(busy) {
     convertBtn.disabled = busy;
-    convertBtn.textContent = busy ? 'Converting… please wait' : 'Convert PDF';
+    convertBtn.textContent = busy ? 'Converting… please wait' : 'Convert PDF to Excel';
   }
 
   function showError(value) {
@@ -118,7 +114,7 @@
     try {
       return text ? JSON.parse(text) : {};
     } catch (_) {
-      throw new Error(`Server returned an invalid response (${response.status}). Check the Terminal for the actual error.`);
+      throw new Error(`Server returned an invalid response (${response.status}).`);
     }
   }
 
@@ -190,7 +186,7 @@
         return;
       }
       if (job.status === 'failed') {
-        throw new Error(job.error || 'Conversion failed. Check the Terminal for details.');
+        throw new Error(job.error || 'Conversion failed.');
       }
 
       pollingTimer = window.setTimeout(() => poll(id), 900);

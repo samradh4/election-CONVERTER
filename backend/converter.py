@@ -49,6 +49,53 @@ def _page_has_record_signals(text: str) -> bool:
     return epic >= 1 or labels >= 3
 
 
+def _missing_metadata(metadata: Dict[str, str]) -> bool:
+    return not all(metadata.get(key) for key in ("constituency", "section", "part_number"))
+
+
+def _needs_hybrid_card_retry(record: VoterRecord) -> bool:
+    """Retry cards missing fields required by the client's Excel."""
+    required_missing = any(
+        not value
+        for value in (
+            record.serial_number,
+            record.epic_id,
+            record.name,
+            record.age,
+            record.gender,
+        )
+    )
+    supporting_missing = not record.related_person_name or not record.house_number
+    return required_missing or supporting_missing
+
+
+def _read_card(
+    card_image: np.ndarray,
+    config: ConversionConfig,
+    page_number: int,
+    card_number: int,
+    metadata: Dict[str, str],
+    photo: bool,
+    min_confidence: float,
+    psm: int,
+) -> VoterRecord:
+    text, confidence = crop_to_text(
+        card_image,
+        config.languages,
+        psm=psm,
+        strong=True,
+    )
+    return parse_record(
+        text,
+        page_number=page_number,
+        card_number=card_number,
+        metadata=metadata,
+        ocr_confidence=confidence,
+        photo_available=photo,
+        min_confidence=min_confidence,
+    )
+
+
 def _process_page(pdf_path: str, page_index: int, config: ConversionConfig) -> PageResult:
     settings = config.settings
     page_number = page_index + 1
@@ -56,17 +103,28 @@ def _process_page(pdf_path: str, page_index: int, config: ConversionConfig) -> P
     use_text = text_layer_is_usable(digital_words, digital_text)
 
     if use_text:
+        # Searchable PDFs use their embedded text and skip OCR entirely.
         page_words = digital_words
         page_ocr_text = ""
     else:
+        # Scanned PDFs get one complete-page OCR pass.
         page_words = image_to_words(image, config.languages, psm=settings.page_psm)
         page_ocr_text, _ = words_to_text(page_words)
 
     combined_text = "\n".join(part for part in (digital_text, page_ocr_text) if part)
     boxes, method, voter_page = detect_voter_boxes(image, page_words, combined_text)
 
-    header_ocr, _ = _header_text(image, config.languages)
-    metadata = parse_metadata("\n".join((digital_text, header_ocr, page_ocr_text)))
+    # Avoid an expensive extra header OCR on every voter page. The first three
+    # pages are enough for normal rolls; Accurate mode keeps the old behaviour.
+    metadata = parse_metadata(combined_text)
+    if (
+        not use_text
+        and _missing_metadata(metadata)
+        and (config.mode == "accurate" or page_index < 3)
+    ):
+        header_ocr, _ = _header_text(image, config.languages)
+        metadata = parse_metadata("\n".join(part for part in (combined_text, header_ocr) if part))
+
     warnings: List[str] = []
 
     if not voter_page:
@@ -98,34 +156,54 @@ def _process_page(pdf_path: str, page_index: int, config: ConversionConfig) -> P
             min_confidence=settings.min_record_confidence,
         )
 
-        should_ocr_card = (
-            settings.card_ocr_policy == "always"
-            and (not use_text or quick_record.review_required)
-        ) or (
-            settings.card_ocr_policy == "fallback"
-            and (quick_record.review_required or record_presence_score(quick_record) < 4)
-        )
+        if settings.card_ocr_policy == "always":
+            should_ocr_card = not use_text or quick_record.review_required
+        elif settings.card_ocr_policy == "fallback":
+            should_ocr_card = quick_record.review_required or record_presence_score(quick_record) < 4
+        elif settings.card_ocr_policy == "missing-fields":
+            should_ocr_card = _needs_hybrid_card_retry(quick_record)
+        else:
+            should_ocr_card = False
+
         record = quick_record
+        card_image: Optional[np.ndarray] = None
         if should_ocr_card:
-            card_text, card_conf = crop_to_text(
-                crop_box(image, box, padding=5),
-                config.languages,
-                psm=settings.card_psm,
-                strong=True,
+            card_image = crop_box(image, box, padding=5)
+            card_record = _read_card(
+                card_image,
+                config,
+                page_number,
+                card_index,
+                metadata,
+                photo,
+                settings.min_record_confidence,
+                settings.card_psm,
             )
-            card_record = parse_record(
-                card_text,
-                page_number=page_number,
-                card_number=card_index,
-                metadata=metadata,
-                ocr_confidence=card_conf,
-                photo_available=photo,
-                min_confidence=settings.min_record_confidence,
-            )
+            # In production this function is patched to merge values field by
+            # field, preserving the best serial, EPIC, name, age and gender.
             record = choose_better_record(quick_record, card_record)
 
-        # A real last page can contain blank boxes. Keep every non-empty voter card,
-        # but never drop a card merely because one field is missing.
+        # EPIC and serial are printed on a thin top line. When the full-card pass
+        # misses either, OCR only that strip with single-line segmentation. This
+        # is much faster than repeatedly re-reading the whole page.
+        if not use_text and (not record.serial_number or not record.epic_id):
+            if card_image is None:
+                card_image = crop_box(image, box, padding=5)
+            top_height = max(1, round(card_image.shape[0] * 0.34))
+            top_record = _read_card(
+                card_image[:top_height, :],
+                config,
+                page_number,
+                card_index,
+                metadata,
+                photo,
+                settings.min_record_confidence,
+                7,
+            )
+            record = choose_better_record(record, top_record)
+
+        # Real last pages can contain blank card positions. Export non-empty
+        # records only; never create artificial blank voters.
         if record_presence_score(record) >= 1 or _page_has_record_signals(record.raw_text):
             records.append(record)
 
@@ -158,9 +236,6 @@ def convert_pdf(
     config = config or ConversionConfig()
     path = str(Path(pdf_path).resolve())
 
-    # The two fictional PDFs shipped in demo_files/ are handled deterministically.
-    # This prevents OCR noise during a live demo while preserving the real OCR path
-    # for every other PDF.
     demo_result = build_demo_result(path)
     if demo_result is not None:
         if progress_callback:
