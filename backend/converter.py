@@ -30,6 +30,7 @@ from .parser import (
     record_presence_score,
 )
 from .pdf_reader import get_page_count, render_page, text_layer_is_usable
+from .turbo_reader import read_card_top_lines, read_page_columns
 
 ProgressCallback = Callable[[int, int, str], None]
 
@@ -54,7 +55,6 @@ def _missing_metadata(metadata: Dict[str, str]) -> bool:
 
 
 def _needs_hybrid_card_retry(record: VoterRecord) -> bool:
-    """Retry cards missing fields required by the client's Excel."""
     required_missing = any(
         not value
         for value in (
@@ -96,6 +96,27 @@ def _read_card(
     )
 
 
+def _record_from_words(
+    words,
+    box,
+    page_number: int,
+    card_number: int,
+    metadata: Dict[str, str],
+    photo: bool,
+    min_confidence: float,
+) -> VoterRecord:
+    text, confidence = words_to_text(words_in_box(words, box))
+    return parse_record(
+        text,
+        page_number=page_number,
+        card_number=card_number,
+        metadata=metadata,
+        ocr_confidence=confidence,
+        photo_available=photo,
+        min_confidence=min_confidence,
+    )
+
+
 def _process_page(pdf_path: str, page_index: int, config: ConversionConfig) -> PageResult:
     settings = config.settings
     page_number = page_index + 1
@@ -103,19 +124,15 @@ def _process_page(pdf_path: str, page_index: int, config: ConversionConfig) -> P
     use_text = text_layer_is_usable(digital_words, digital_text)
 
     if use_text:
-        # Searchable PDFs use their embedded text and skip OCR entirely.
         page_words = digital_words
         page_ocr_text = ""
     else:
-        # Scanned PDFs get one complete-page OCR pass.
         page_words = image_to_words(image, config.languages, psm=settings.page_psm)
         page_ocr_text, _ = words_to_text(page_words)
 
     combined_text = "\n".join(part for part in (digital_text, page_ocr_text) if part)
     boxes, method, voter_page = detect_voter_boxes(image, page_words, combined_text)
 
-    # Avoid an expensive extra header OCR on every voter page. The first three
-    # pages are enough for normal rolls; Accurate mode keeps the old behaviour.
     metadata = parse_metadata(combined_text)
     if (
         not use_text
@@ -142,19 +159,42 @@ def _process_page(pdf_path: str, page_index: int, config: ConversionConfig) -> P
             "पृष्ठ {}: कार्ड बॉर्डर साफ नहीं मिले; 3-कॉलम grid fallback उपयोग हुआ।".format(page_number)
         )
 
+    # Turbo mode uses a batched AI reader: three column passes for body text and
+    # one shared sparse pass for all serial/EPIC strips. This avoids launching a
+    # separate OCR process for every voter card.
+    turbo_words = []
+    if config.mode == "turbo" and not use_text:
+        turbo_words = read_page_columns(
+            image,
+            config.languages,
+            columns=3,
+            psm=settings.card_psm,
+        )
+
     records: List[VoterRecord] = []
     for card_index, box in enumerate(boxes, start=1):
-        quick_text, quick_conf = words_to_text(words_in_box(page_words, box))
         photo = estimate_photo_available(image, box)
-        quick_record = parse_record(
-            quick_text,
-            page_number=page_number,
-            card_number=card_index,
-            metadata=metadata,
-            ocr_confidence=quick_conf,
-            photo_available=photo,
-            min_confidence=settings.min_record_confidence,
+        quick_record = _record_from_words(
+            page_words,
+            box,
+            page_number,
+            card_index,
+            metadata,
+            photo,
+            settings.min_record_confidence,
         )
+
+        if turbo_words:
+            batch_record = _record_from_words(
+                turbo_words,
+                box,
+                page_number,
+                card_index,
+                metadata,
+                photo,
+                settings.min_record_confidence,
+            )
+            quick_record = choose_better_record(quick_record, batch_record)
 
         if settings.card_ocr_policy == "always":
             should_ocr_card = not use_text or quick_record.review_required
@@ -179,14 +219,13 @@ def _process_page(pdf_path: str, page_index: int, config: ConversionConfig) -> P
                 settings.min_record_confidence,
                 settings.card_psm,
             )
-            # In production this function is patched to merge values field by
-            # field, preserving the best serial, EPIC, name, age and gender.
             record = choose_better_record(quick_record, card_record)
 
-        # EPIC and serial are printed on a thin top line. When the full-card pass
-        # misses either, OCR only that strip with single-line segmentation. This
-        # is much faster than repeatedly re-reading the whole page.
-        if not use_text and (not record.serial_number or not record.epic_id):
+        if (
+            config.mode != "turbo"
+            and not use_text
+            and (not record.serial_number or not record.epic_id)
+        ):
             if card_image is None:
                 card_image = crop_box(image, box, padding=5)
             top_height = max(1, round(card_image.shape[0] * 0.34))
@@ -202,10 +241,32 @@ def _process_page(pdf_path: str, page_index: int, config: ConversionConfig) -> P
             )
             record = choose_better_record(record, top_record)
 
-        # Real last pages can contain blank card positions. Export non-empty
-        # records only; never create artificial blank voters.
         if record_presence_score(record) >= 1 or _page_has_record_signals(record.raw_text):
             records.append(record)
+
+    if config.mode == "turbo" and not use_text and records:
+        needs_top_repair = any(not record.serial_number or not record.epic_id for record in records)
+        if needs_top_repair:
+            top_words = read_card_top_lines(image, boxes, config.languages, psm=11)
+            repaired_records: List[VoterRecord] = []
+            for record in records:
+                if record.serial_number and record.epic_id:
+                    repaired_records.append(record)
+                    continue
+                box_index = max(0, min(len(boxes) - 1, record.source_card - 1))
+                box = boxes[box_index]
+                photo = estimate_photo_available(image, box)
+                top_record = _record_from_words(
+                    top_words,
+                    box,
+                    page_number,
+                    record.source_card,
+                    metadata,
+                    photo,
+                    settings.min_record_confidence,
+                )
+                repaired_records.append(choose_better_record(record, top_record))
+            records = repaired_records
 
     if not records:
         warnings.append("पृष्ठ {}: voter grid मिला, लेकिन कोई रिकॉर्ड पढ़ा नहीं जा सका।".format(page_number))
@@ -213,6 +274,13 @@ def _process_page(pdf_path: str, page_index: int, config: ConversionConfig) -> P
         warnings.append(
             "पृष्ठ {}: {} कार्ड स्थान मिले, {} गैर-खाली रिकॉर्ड निकले।".format(
                 page_number, len(boxes), len(records)
+            )
+        )
+
+    if config.mode == "turbo" and not use_text:
+        warnings.append(
+            "पृष्ठ {}: Turbo AI Reader ने card-by-card OCR के बजाय batched page reading उपयोग की।".format(
+                page_number
             )
         )
 
