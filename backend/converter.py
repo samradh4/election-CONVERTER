@@ -49,6 +49,26 @@ def _page_has_record_signals(text: str) -> bool:
     return epic >= 1 or labels >= 3
 
 
+def _missing_metadata(metadata: Dict[str, str]) -> bool:
+    return not all(metadata.get(key) for key in ("constituency", "section", "part_number"))
+
+
+def _needs_hybrid_card_retry(record: VoterRecord) -> bool:
+    """Retry only cards whose important fields were not read on the page pass."""
+    critical_missing = not record.epic_id or not record.name
+    supporting_missing = sum(
+        1
+        for value in (
+            record.related_person_name,
+            record.house_number,
+            record.age,
+            record.gender,
+        )
+        if not value
+    ) >= 2
+    return critical_missing or supporting_missing
+
+
 def _process_page(pdf_path: str, page_index: int, config: ConversionConfig) -> PageResult:
     settings = config.settings
     page_number = page_index + 1
@@ -56,17 +76,24 @@ def _process_page(pdf_path: str, page_index: int, config: ConversionConfig) -> P
     use_text = text_layer_is_usable(digital_words, digital_text)
 
     if use_text:
+        # Searchable PDF: use its embedded text directly, with no page OCR.
         page_words = digital_words
         page_ocr_text = ""
     else:
+        # Scanned PDF: one OCR pass over the complete page.
         page_words = image_to_words(image, config.languages, psm=settings.page_psm)
         page_ocr_text, _ = words_to_text(page_words)
 
     combined_text = "\n".join(part for part in (digital_text, page_ocr_text) if part)
     boxes, method, voter_page = detect_voter_boxes(image, page_words, combined_text)
 
-    header_ocr, _ = _header_text(image, config.languages)
-    metadata = parse_metadata("\n".join((digital_text, header_ocr, page_ocr_text)))
+    # Reuse the page text for metadata. OCR the header separately only when a
+    # scanned page still has missing metadata, avoiding an extra OCR call on most pages.
+    metadata = parse_metadata(combined_text)
+    if not use_text and _missing_metadata(metadata):
+        header_ocr, _ = _header_text(image, config.languages)
+        metadata = parse_metadata("\n".join(part for part in (combined_text, header_ocr) if part))
+
     warnings: List[str] = []
 
     if not voter_page:
@@ -98,13 +125,15 @@ def _process_page(pdf_path: str, page_index: int, config: ConversionConfig) -> P
             min_confidence=settings.min_record_confidence,
         )
 
-        should_ocr_card = (
-            settings.card_ocr_policy == "always"
-            and (not use_text or quick_record.review_required)
-        ) or (
-            settings.card_ocr_policy == "fallback"
-            and (quick_record.review_required or record_presence_score(quick_record) < 4)
-        )
+        if settings.card_ocr_policy == "always":
+            should_ocr_card = not use_text or quick_record.review_required
+        elif settings.card_ocr_policy == "fallback":
+            should_ocr_card = quick_record.review_required or record_presence_score(quick_record) < 4
+        elif settings.card_ocr_policy == "missing-fields":
+            should_ocr_card = _needs_hybrid_card_retry(quick_record)
+        else:
+            should_ocr_card = False
+
         record = quick_record
         if should_ocr_card:
             card_text, card_conf = crop_to_text(
@@ -175,6 +204,8 @@ def convert_pdf(
     if config.max_pages is not None:
         page_indexes = page_indexes[: max(1, int(config.max_pages))]
 
+    # The standalone build contains both language files. Validate once before
+    # parallel work so OCR failures are reported clearly instead of per page.
     validate_ocr_languages(config.languages)
     if progress_callback:
         progress_callback(0, len(page_indexes), "PDF पढ़ी जा रही है")
