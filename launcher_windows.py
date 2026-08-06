@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import socket
+import sys
 import threading
 import time
 import webbrowser
@@ -29,8 +30,26 @@ def show_error(message: str) -> None:
         pass
 
 
+def self_test() -> None:
+    """Validate the exact bundled OCR/parser runtime before publishing the EXE."""
+    from backend import parser
+    from backend.ocr import validate_ocr_languages
+
+    validate_ocr_languages("hin+eng")
+    epic = parser._extract_epic("123 ABC O1234567")
+    if epic != "ABC01234567":
+        raise RuntimeError("EPIC parser self-test failed: {}".format(epic))
+    serial = parser._extract_serial(["७६७ ABC01234567"])
+    if serial != "767":
+        raise RuntimeError("Serial parser self-test failed: {}".format(serial))
+
+
 def main() -> None:
     try:
+        if "--self-test" in sys.argv:
+            self_test()
+            return
+
         port = free_port()
         url = "http://127.0.0.1:{}".format(port)
 
@@ -40,11 +59,6 @@ def main() -> None:
 
         threading.Thread(target=open_browser, daemon=True).start()
 
-        # The application is built as a windowed EXE, so sys.stdout and
-        # sys.stderr are unavailable. Uvicorn's default logging formatter tries
-        # to attach to those streams and crashes with:
-        # "Unable to configure formatter 'default'".
-        # Disable Uvicorn's dictConfig logging and run silently instead.
         config = uvicorn.Config(
             app,
             host="127.0.0.1",
