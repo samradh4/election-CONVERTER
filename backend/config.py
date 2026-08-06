@@ -36,7 +36,7 @@ TESSDATA_DIR = _BUNDLED_TESSDATA if _BUNDLED_TESSDATA.is_dir() else _PROJECT_TES
 class ModeSettings:
     dpi: int
     workers: int
-    card_ocr_policy: str  # never, batched, missing-fields, fallback, always
+    card_ocr_policy: str
     min_record_confidence: float
     page_psm: int
     card_psm: int
@@ -48,13 +48,14 @@ def _workers(limit: int) -> int:
 
 
 MODES = {
-    # Fastest offline reader. It uses one page pass, three column-level repair
-    # passes, and one shared serial/EPIC pass instead of OCRing every card.
+    # Default client mode. 250 DPI preserves small Hindi text and EPIC digits;
+    # the strict reader batches repair OCR so it remains much faster than
+    # re-reading every card one at a time.
     "turbo": ModeSettings(
-        dpi=205,
+        dpi=250,
         workers=_workers(4),
         card_ocr_policy="batched",
-        min_record_confidence=0.60,
+        min_record_confidence=0.70,
         page_psm=11,
         card_psm=6,
     ),
