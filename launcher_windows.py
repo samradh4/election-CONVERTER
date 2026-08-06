@@ -39,12 +39,19 @@ def main() -> None:
             webbrowser.open(url, new=1)
 
         threading.Thread(target=open_browser, daemon=True).start()
+
+        # The application is built as a windowed EXE, so sys.stdout and
+        # sys.stderr are unavailable. Uvicorn's default logging formatter tries
+        # to attach to those streams and crashes with:
+        # "Unable to configure formatter 'default'".
+        # Disable Uvicorn's dictConfig logging and run silently instead.
         config = uvicorn.Config(
             app,
             host="127.0.0.1",
             port=port,
-            log_level="warning",
+            log_level="critical",
             access_log=False,
+            log_config=None,
         )
         server = uvicorn.Server(config)
         server.run()
