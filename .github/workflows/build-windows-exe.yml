@@ -46,6 +46,11 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements-build.txt
 
+      - name: Validate optimized source
+        run: |
+          python -m compileall -q app.py backend
+          python -c "from backend.config import ConversionConfig; assert ConversionConfig().mode == 'hybrid'; print('Hybrid mode ready')"
+
       - name: Build one standalone EXE
         run: |
           python -m PyInstaller --noconfirm --clean ElectionPDFConverter.spec
