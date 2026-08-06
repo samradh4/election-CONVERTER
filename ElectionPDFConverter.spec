@@ -8,15 +8,13 @@ from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, co
 ROOT = Path(SPECPATH)
 TESSERACT_DIR = Path(os.environ.get("TESSERACT_DIR", "")).resolve()
 if not TESSERACT_DIR.is_dir():
-    raise SystemExit(
-        "TESSERACT_DIR is missing. Run build_exe_windows.bat instead of calling PyInstaller directly."
-    )
+    raise SystemExit("TESSERACT_DIR is missing.")
 if not (TESSERACT_DIR / "tesseract.exe").is_file():
     raise SystemExit("tesseract.exe was not found in {}".format(TESSERACT_DIR))
-if not (TESSERACT_DIR / "tessdata" / "hin.traineddata").is_file():
-    raise SystemExit("Hindi OCR file hin.traineddata is missing from Tesseract tessdata.")
-if not (TESSERACT_DIR / "tessdata" / "eng.traineddata").is_file():
-    raise SystemExit("English OCR file eng.traineddata is missing from Tesseract tessdata.")
+for language in ("hin", "eng"):
+    trained = TESSERACT_DIR / "tessdata" / (language + ".traineddata")
+    if not trained.is_file():
+        raise SystemExit("Missing OCR language file: {}".format(trained))
 
 hiddenimports = []
 for package in ("uvicorn", "fastapi", "starlette", "multipart", "pytesseract"):
@@ -26,13 +24,21 @@ binaries = []
 for package in ("cv2", "fitz", "numpy"):
     binaries += collect_dynamic_libs(package)
 
+# Include the full portable Tesseract installation, including DLLs and
+# Hindi/English traineddata, inside the single EXE. PyInstaller extracts these
+# files to its private runtime directory when the application starts.
 datas = [
     (str(ROOT / "static" / "index.html"), "static"),
-    (str(ROOT / "tessdata" / ".gitkeep"), "tessdata"),
 ]
 datas += collect_data_files("pytesseract")
-datas += [(str(path), str(Path("tesseract") / path.relative_to(TESSERACT_DIR).parent))
-          for path in TESSERACT_DIR.rglob("*") if path.is_file()]
+datas += [
+    (
+        str(path),
+        str(Path("tesseract") / path.relative_to(TESSERACT_DIR).parent),
+    )
+    for path in TESSERACT_DIR.rglob("*")
+    if path.is_file()
+]
 
 analysis = Analysis(
     [str(ROOT / "launcher_windows.py")],
@@ -53,9 +59,10 @@ pyz = PYZ(analysis.pure)
 exe = EXE(
     pyz,
     analysis.scripts,
+    analysis.binaries,
+    analysis.datas,
     [],
-    exclude_binaries=True,
-    name="ElectionPDFConverter",
+    name="VoterListConverter",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -68,14 +75,5 @@ exe = EXE(
     entitlements_file=None,
     icon=str(ROOT / "app_icon.ico"),
     version=str(ROOT / "version_info.txt"),
-)
-
-collection = COLLECT(
-    exe,
-    analysis.binaries,
-    analysis.datas,
-    strip=False,
-    upx=False,
-    upx_exclude=[],
-    name="ElectionPDFConverter",
+    runtime_tmpdir=None,
 )
