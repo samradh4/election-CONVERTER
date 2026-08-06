@@ -17,7 +17,7 @@ on:
 
 jobs:
   build:
-    runs-on: windows-2025
+    runs-on: windows-latest
 
     steps:
       - name: Download project
@@ -52,10 +52,10 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements-build.txt
 
-      - name: Validate optimized source
+      - name: Validate Turbo AI Reader source
         run: |
           python -m compileall -q app.py backend launcher_windows.py
-          python -c "import app; from backend.config import ConversionConfig; from backend import parser; assert ConversionConfig().mode == 'hybrid'; assert parser._extract_epic('123 ABC O1234567') == 'ABC01234567'; assert parser._extract_serial(['७६७ ABC01234567']) == '767'; print('Hybrid accuracy path ready')"
+          python -c "import app; from backend.config import ConversionConfig; from backend import parser; from backend.turbo_reader import read_page_columns, read_card_top_lines; assert ConversionConfig().mode == 'turbo'; assert parser._extract_epic('123 ABC O1234567') == 'ABC01234567'; assert parser._extract_serial(['७६७ ABC01234567']) == '767'; print('Turbo AI Reader path ready')"
 
       - name: Build one standalone EXE
         run: |
@@ -79,6 +79,6 @@ jobs:
       - name: Upload standalone EXE
         uses: actions/upload-artifact@v4
         with:
-          name: VoterListConverter-Fast-Accurate-Windows-x64
+          name: VoterListConverter-Turbo-AI-Windows-x64
           path: dist/VoterListConverter.exe
           if-no-files-found: error
