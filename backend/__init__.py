@@ -5,3 +5,7 @@ _apply_accuracy_patch()
 from .strict_name_patch import apply as _apply_strict_name_patch
 
 _apply_strict_name_patch()
+
+from .legacy_epic_patch import apply as _apply_legacy_epic_patch
+
+_apply_legacy_epic_patch()
